@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
-
+from .model_module import Contextual_Attention_Module
+import torch.nn.functional as F
 
 class BaseNetwork(nn.Module):
     def __init__(self):
@@ -36,9 +37,13 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False):
         super(InpaintGenerator, self).__init__()
-
+        if contextual_attention:
+            print('using contextual attention')
+        else:
+            print('not using contextual_attention')
+        self.use_contextual_attention = contextual_attention
         self.encoder = nn.Sequential(
             nn.ReflectionPad2d(3),
             nn.Conv2d(in_channels=4, out_channels=64, kernel_size=7, padding=0),
@@ -53,7 +58,9 @@ class InpaintGenerator(BaseNetwork):
             nn.InstanceNorm2d(256, track_running_stats=False),
             nn.ReLU(True)
         )
-
+        if self.use_contextual_attention:
+            self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1)
+        
         blocks = []
         for _ in range(residual_blocks):
             block = ResnetBlock(256, 2)
@@ -77,8 +84,11 @@ class InpaintGenerator(BaseNetwork):
         if init_weights:
             self.init_weights()
 
-    def forward(self, x):
+    def forward(self, x, masks):
         x = self.encoder(x)
+        masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
+        if self.use_contextual_attention:
+            x,_ = self.contextual_attention(x, x, mask=masks)
         x = self.middle(x)
         x = self.decoder(x)
         x = (torch.tanh(x) + 1) / 2

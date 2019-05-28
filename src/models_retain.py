@@ -87,7 +87,6 @@ class EdgeModel(BaseModel):
     def process(self, images, edges, masks):
         self.iteration += 1
 
-
         # zero optimizers
         self.gen_optimizer.zero_grad()
         self.dis_optimizer.zero_grad()
@@ -152,11 +151,12 @@ class EdgeModel(BaseModel):
 
 class InpaintingModel(BaseModel):
     def __init__(self, config):
+        self.run_once=False
         super(InpaintingModel, self).__init__('InpaintingModel', config)
 
         # generator input: [rgb(3) + edge(1)]
         # discriminator input: [rgb(3)]
-        generator = InpaintGenerator(contextual_attention=config.USE_CA)
+        generator = InpaintGenerator()
         discriminator = Discriminator(in_channels=3, use_sigmoid=config.GAN_LOSS != 'hinge')
         if len(config.GPU) > 1:
             generator = nn.DataParallel(generator, config.GPU)
@@ -249,12 +249,16 @@ class InpaintingModel(BaseModel):
     def forward(self, images, edges, masks):
         images_masked = (images * (1 - masks).float()) + masks
         inputs = torch.cat((images_masked, edges), dim=1)
-        outputs = self.generator(inputs, masks)                                    # in: [rgb(3) + edge(1)]
+        outputs = self.generator(inputs)                                    # in: [rgb(3) + edge(1)]
         return outputs
 
     def backward(self, gen_loss=None, dis_loss=None):
         dis_loss.backward()
         self.dis_optimizer.step()
-
-        gen_loss.backward()
+        
+        if not self.run_once:
+            gen_loss.backward(retain_graph=True)
+            self.run_once = True
+        else:
+            gen_loss.backward()
         self.gen_optimizer.step()
