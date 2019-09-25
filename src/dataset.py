@@ -11,10 +11,11 @@ from scipy.misc import imread
 from skimage.feature import canny
 from skimage.color import rgb2gray, gray2rgb
 from .utils import create_mask
+from .utils import dilate_mask_with_depth
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, config, flist, edge_flist, mask_flist, edge_src_flist=None, augment=True, training=True):
+    def __init__(self, config, flist, edge_flist, mask_flist, edge_src_flist=None, objmask_flist=None, depthmap_flist=None, augment=True, training=True):
         super(Dataset, self).__init__()
         self.augment = augment
         self.training = training
@@ -35,6 +36,20 @@ class Dataset(torch.utils.data.Dataset):
                     print(f,len(l))
         else:
             print('not using custom edge detection source')
+        self.objmask = objmask_flist
+        if self.objmask is not None and config.OBJMASK:
+            self.objmask_data = self.load_flist(self.objmask)
+            print('using object masks')
+            print(self.objmask,len(self.objmask_data))
+        else:
+            print('not using object masks')
+        self.depthmap = depthmap_flist
+        if self.depthmap is not None and config.EDGE == 3:
+            self.depthmap_data = self.load_flist(self.depthmap)
+            print('using depth maps for mask dilation')
+            print(self.depthmap, len(self.depthmap_data))
+        else:
+            print('not using depth maps')
         print(flist, len(self.data))
         print(edge_flist, len(self.edge_data))
         print(mask_flist, len(self.mask_data))
@@ -45,6 +60,12 @@ class Dataset(torch.utils.data.Dataset):
         self.edge = config.EDGE
         self.mask = config.MASK
         self.nms = config.NMS
+        self.use_objmask = config.OBJMASK
+        self.reuse_edgesrc = config.REUSE_EDGESRC
+        if self.reuse_edgesrc:
+            print('reusing edge src image as input to edge generator')
+        self.exact_mask_prob = 0 if config.EXACT_MASK_PROB is None else config.EXACT_MASK_PROB
+        print('probability of using exact mask:',self.exact_mask_prob)
 
         # in test mode, there's a one-to-one relationship between mask and image
         # masks are loaded non random
@@ -86,36 +107,52 @@ class Dataset(torch.utils.data.Dataset):
         img_gray = rgb2gray(img)
 
         # load mask
-        mask = self.load_mask(img, index)
+        randomize = self.training and np.random.binomial(1,1-self.exact_mask_prob) > 0
+        mask = self.load_mask(img, index, randomize)
 
         # load edge
         if self.edge_src is not None and self.edge == 3:
             if isinstance(self.edge_src, str):
                 edge_img = imread(self.edge_src_data[index])
                 edge_img = rgb2gray(edge_img)
+                if self.reuse_edgesrc:
+                    img_gray = edge_img
             else:
                 edge_img = [rgb2gray(imread(fl[index])) for fl in self.edge_src_data]
+                if self.reuse_edgesrc:
+                    img_gray = edge_img[0]
         else:
             edge_img = img_gray
-        edge = self.load_edge(edge_img, index, mask)
-        #print('img shape:',img.shape)
-        #print('edge shape:',edge.shape)
-        #print('mask shape:',mask.shape)
+
+        if self.depthmap is not None and self.edge == 3:
+            depth = self.load_depth(img, index)
+        else:
+            depth = None
+        edge = self.load_edge(edge_img, index, mask, depth, randomize)
+        
+        if self.objmask is not None and self.use_objmask:
+            objmask = self.load_objmask(img, index)
+        
         # augment data
-        if self.augment and np.random.binomial(1, 0.5) > 0:
-            img = img[:, ::-1, ...]
-            img_gray = img_gray[:, ::-1, ...]
-            edge = edge[:, ::-1, ...]
-            mask = mask[:, ::-1, ...]
+        if self.augment:
+            if np.random.binomial(1, 0.5) > 0:
+                img = img[:, ::-1, ...]
+                img_gray = img_gray[:, ::-1, ...]
+                edge = edge[:, ::-1, ...]
+                mask = mask[:, ::-1, ...]
+            #if np.random.binomial(1, 0.5) > 0:
+                #TODO: flip height and width
+        if self.objmask is not None and self.use_objmask:
+            return self.to_tensor(img), self.to_tensor(img_gray), self.to_tensor(edge), self.to_tensor(mask), self.to_tensor(objmask)
+        else:
+            return self.to_tensor(img), self.to_tensor(img_gray), self.to_tensor(edge), self.to_tensor(mask)
 
-        return self.to_tensor(img), self.to_tensor(img_gray), self.to_tensor(edge), self.to_tensor(mask)
-
-    def load_edge(self, img, index, mask):
+    def load_edge(self, img, index, mask, depth=None, randomize=True):
         sigma = self.sigma
 
         # in test mode images are masked (with masked regions),
         # using 'mask' parameter prevents canny to detect edges for the masked regions
-        mask = None if self.training else (1 - mask / 255).astype(np.bool)
+        mask = None if randomize else (1 - mask / 255).astype(np.bool)
 
         # canny
         if self.edge == 1 or self.edge == 3:
@@ -129,8 +166,14 @@ class Dataset(torch.utils.data.Dataset):
             if isinstance(img, list):
                 imgh,imgw = img[0].shape[0:2]
                 edge = np.zeros([imgh,imgw]).astype(np.float)
-                for imi in img:
-                    edge = np.maximum(edge, canny(imi, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float))
+                for ind,imi in enumerate(img):
+                    if ind == 1 and depth is not None and not randomize:
+                        mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
+                        newedge = canny(np.maximum(imi.astype(np.uint8)*255, 255-mask.astype(np.uint8)*255), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
+                        newedge *= mask_w
+                        edge = np.maximum(edge, newedge)
+                    else:
+                        edge = np.maximum(edge, canny(imi, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float))
                 return edge
             else:
                 return canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float)
@@ -149,7 +192,22 @@ class Dataset(torch.utils.data.Dataset):
 
             return edge
 
-    def load_mask(self, img, index):
+    def load_objmask(self, img, index):
+        imgh, imgw = img.shape[0:2]
+        mask = imread(self.objmask_data[index])
+        mask = rgb2gray(mask)
+        mask = self.resize(mask, imgh, imgw, centerCrop=False)
+        mask = (mask > 0).astype(np.uint8) * 255
+        return mask
+
+    def load_depth(self, img, index):
+        imgh, imgw = img.shape[0:2]
+        depth = imread(self.depthmap_data[index])
+        depth = rgb2gray(depth)
+        depth = self.resize(depth, imgh, imgw, centerCrop = False)
+        return depth
+
+    def load_mask(self, img, index, randomize):
         imgh, imgw = img.shape[0:2]
         mask_type = self.mask
 
@@ -172,7 +230,7 @@ class Dataset(torch.utils.data.Dataset):
 
         # external
         if mask_type == 3:
-            mask_index = random.randint(0, len(self.mask_data) - 1)
+            mask_index = random.randint(0, len(self.mask_data) - 1) if randomize else index
             mask = imread(self.mask_data[mask_index])
             if mask.ndim > 2:
                 mask = mask[:,:,0]
@@ -183,6 +241,8 @@ class Dataset(torch.utils.data.Dataset):
         # test mode: load mask non random
         if mask_type == 6:
             mask = imread(self.mask_data[index])
+            if mask.ndim > 2:
+                mask = mask[:,:,0]
             mask = self.resize(mask, imgh, imgw, centerCrop=False)
             mask = rgb2gray(mask)
             mask = (mask > 0).astype(np.uint8) * 255

@@ -37,16 +37,20 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False):
         super(InpaintGenerator, self).__init__()
         if contextual_attention:
             print('using contextual attention')
         else:
             print('not using contextual_attention')
+        if use_objmasks:
+            print('using objectmasks in inpaint generator')
+        else:
+            print('not using objmasks in inpaint generator')
         self.use_contextual_attention = contextual_attention
         self.encoder = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels=4, out_channels=64, kernel_size=7, padding=0),
+            nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
             nn.InstanceNorm2d(64, track_running_stats=False),
             nn.ReLU(True),
 
@@ -97,12 +101,15 @@ class InpaintGenerator(BaseNetwork):
 
 
 class EdgeGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, use_spectral_norm=True, init_weights=True):
+    def __init__(self, residual_blocks=8, use_spectral_norm=True, init_weights=True, use_objmask=False):
         super(EdgeGenerator, self).__init__()
-
+        if use_objmask:
+            print('using objectmasks in edgeGenerator')
+        else:
+            print('not using objmasks in edgeGenerator')
         self.encoder = nn.Sequential(
             nn.ReflectionPad2d(3),
-            spectral_norm(nn.Conv2d(in_channels=3, out_channels=64, kernel_size=7, padding=0), use_spectral_norm),
+            spectral_norm(nn.Conv2d(in_channels=(4 if use_objmask else 3), out_channels=64, kernel_size=7, padding=0), use_spectral_norm),
             nn.InstanceNorm2d(64, track_running_stats=False),
             nn.ReLU(True),
 

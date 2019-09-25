@@ -5,12 +5,36 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-
+from skimage.filters import sobel_h, sobel_v, gaussian
+from skimage.color import rgb2gray
+from numpy.linalg import norm
+import scipy.ndimage as ndi
+from skimage.transform import warp
 
 def create_dir(dir):
     if not os.path.exists(dir):
         os.makedirs(dir)
 
+
+class GradientTransform(object):
+    def __init__(self, image, sigma=2, magnitude=2):
+        image = rgb2gray(image)
+        image = gaussian(image, sigma=sigma)
+        im_x = sobel_v(image)
+        im_y = sobel_h(image)
+        self.grad = np.stack([im_x,im_y],-1)
+        self.grad *= magnitude/np.maximum(norm(self.grad, axis=2, keepdims=True), 1e-4)
+    def __call__(self,coords):
+        interpcoords = coords[:,::-1].T
+        displacements0 = ndi.map_coordinates(self.grad[:,:,0], interpcoords)
+        displacements1 = ndi.map_coordinates(self.grad[:,:,1], interpcoords)
+        displacements = np.stack([displacements0, displacements1],-1)
+        return coords + displacements
+
+def dilate_mask_with_depth(mask, depthmap, sigma=5, magnitude=2):
+    g = GradientTransform(depthmap, sigma=sigma, magnitude=-magnitude)
+    return warp(mask, g)
+        
 
 def create_mask(width, height, mask_width, mask_height, x=None, y=None):
     mask = np.zeros((height, width))

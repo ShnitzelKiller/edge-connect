@@ -58,7 +58,7 @@ class EdgeModel(BaseModel):
 
         # generator input: [grayscale(1) + edge(1) + mask(1)]
         # discriminator input: (grayscale(1) + edge(1))
-        generator = EdgeGenerator(use_spectral_norm=True)
+        generator = EdgeGenerator(use_spectral_norm=True, use_objmask=config.OBJMASK)
         discriminator = Discriminator(in_channels=2, use_sigmoid=config.GAN_LOSS != 'hinge')
         if len(config.GPU) > 1:
             generator = nn.DataParallel(generator, config.GPU)
@@ -84,7 +84,7 @@ class EdgeModel(BaseModel):
             betas=(config.BETA1, config.BETA2)
         )
 
-    def process(self, images, edges, masks):
+    def process(self, images, edges, masks, objmasks=None):
         self.iteration += 1
 
 
@@ -94,7 +94,7 @@ class EdgeModel(BaseModel):
 
 
         # process outputs
-        outputs = self(images, edges, masks)
+        outputs = self(images, edges, masks, objmasks)
         gen_loss = 0
         dis_loss = 0
 
@@ -133,10 +133,13 @@ class EdgeModel(BaseModel):
 
         return outputs, gen_loss, dis_loss, logs
 
-    def forward(self, images, edges, masks):
+    def forward(self, images, edges, masks, objmasks=None):
         edges_masked = (edges * (1 - masks))
         images_masked = (images * (1 - masks)) + masks
         inputs = torch.cat((images_masked, edges_masked, masks), dim=1)
+        if objmasks is not None:
+            objmasks_masked = (objmasks * (1 - masks))
+            inputs = torch.cat((inputs, objmasks_masked), dim=1)
         outputs = self.generator(inputs)                                    # in: [grayscale(1) + edge(1) + mask(1)]
         return outputs
 
@@ -156,7 +159,7 @@ class InpaintingModel(BaseModel):
 
         # generator input: [rgb(3) + edge(1)]
         # discriminator input: [rgb(3)]
-        generator = InpaintGenerator(contextual_attention=config.USE_CA)
+        generator = InpaintGenerator(contextual_attention=config.USE_CA, use_objmasks=config.OBJMASK)
         discriminator = Discriminator(in_channels=3, use_sigmoid=config.GAN_LOSS != 'hinge')
         if len(config.GPU) > 1:
             generator = nn.DataParallel(generator, config.GPU)
@@ -187,7 +190,7 @@ class InpaintingModel(BaseModel):
             betas=(config.BETA1, config.BETA2)
         )
 
-    def process(self, images, edges, masks):
+    def process(self, images, edges, masks, objmasks=None):
         self.iteration += 1
 
         # zero optimizers
@@ -196,7 +199,7 @@ class InpaintingModel(BaseModel):
 
 
         # process outputs
-        outputs = self(images, edges, masks)
+        outputs = self(images, edges, masks, objmasks)
         gen_loss = 0
         dis_loss = 0
 
@@ -246,9 +249,12 @@ class InpaintingModel(BaseModel):
 
         return outputs, gen_loss, dis_loss, logs
 
-    def forward(self, images, edges, masks):
+    def forward(self, images, edges, masks, objmasks=None):
         images_masked = (images * (1 - masks).float()) + masks
         inputs = torch.cat((images_masked, edges), dim=1)
+        if objmasks is not None:
+            objmasks_masked = (objmasks * (1 - masks))
+            inputs = torch.cat((inputs, objmasks_masked), dim=1)
         outputs = self.generator(inputs, masks)                                    # in: [rgb(3) + edge(1)]
         return outputs
 
