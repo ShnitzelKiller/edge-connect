@@ -28,6 +28,8 @@ class BaseModel(nn.Module):
 
             self.generator.load_state_dict(data['generator'])
             self.iteration = data['iteration']
+        else:
+            print('No existing generator weights at',self.gen_weights_path)
 
         # load discriminator only when training
         if self.config.MODE == 1 and os.path.exists(self.dis_weights_path):
@@ -39,6 +41,8 @@ class BaseModel(nn.Module):
                 data = torch.load(self.dis_weights_path, map_location=lambda storage, loc: storage)
 
             self.discriminator.load_state_dict(data['discriminator'])
+        else:
+            print('No existing discriminator weights at', self.dis_weights_path)
 
     def save(self):
         print('\nsaving %s...\n' % self.name)
@@ -159,7 +163,7 @@ class InpaintingModel(BaseModel):
 
         # generator input: [rgb(3) + edge(1)]
         # discriminator input: [rgb(3)]
-        generator = InpaintGenerator(contextual_attention=config.USE_CA, use_objmasks=config.OBJMASK)
+        generator = InpaintGenerator(contextual_attention=config.USE_CA, ksize=config.CA_KSIZE, use_objmasks=config.OBJMASK)
         discriminator = Discriminator(in_channels=3, use_sigmoid=config.GAN_LOSS != 'hinge')
         if len(config.GPU) > 1:
             generator = nn.DataParallel(generator, config.GPU)

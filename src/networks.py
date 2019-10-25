@@ -37,7 +37,7 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False, ksize=3):
         super(InpaintGenerator, self).__init__()
         if contextual_attention:
             print('using contextual attention')
@@ -63,7 +63,7 @@ class InpaintGenerator(BaseNetwork):
             nn.ReLU(True)
         )
         if self.use_contextual_attention:
-            self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1)
+            self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1, ksize=ksize)
         
         blocks = []
         for _ in range(residual_blocks):

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from .util import *
 
 def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2, 
-                         fuse_k=3, softmax_scale=10., training=True, fuse=True, padding=nn.ZeroPad2d(1)):
+                         fuse_k=3, softmax_scale=10., training=True, fuse=True):
 
         """ Contextual attention layer implementation.
 
@@ -34,7 +34,7 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
 
         # extract patches from background with stride and rate
         kernel = 2*rate
-        raw_w = extract_patches(padding, b, kernel=kernel, stride=rate*stride)
+        raw_w = extract_patches(nn.ZeroPad2d((kernel-1)//2), b, kernel=kernel, stride=rate*stride)
         raw_w = raw_w.contiguous().view(raw_int_bs[0], -1, raw_int_bs[1], kernel, kernel) # B*HW*C*K*K (B, 32*32, 128, 4, 4)
 
         # downscaling foreground option: downscaling both foreground and
@@ -50,7 +50,8 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
         bs = b.size() # B x C x H x W
         int_bs = list(b.size())
         #print('b shape:',b.shape)
-        w = extract_patches(padding,b, stride=stride)
+        w = extract_patches(nn.ZeroPad2d((ksize-1)//2),b, stride=stride, kernel=ksize)
+        
         w = w.contiguous().view(int_fs[0], -1, int_fs[1], ksize, ksize) # B*HW*C*K*K
         #print('w shape:',w.shape)
 
@@ -61,7 +62,7 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
         else:
             mask = torch.zeros([1, 1, bs[2], bs[3]]).cuda()
 
-        m = extract_patches(padding, mask, stride=stride)
+        m = extract_patches(nn.ZeroPad2d((ksize-1)//2), mask, stride=stride, kernel=ksize)
         #print('m.shape before:',m.shape)
         m = m.contiguous().view(int_fs[0], -1, 1, ksize, ksize)  # B*HW*C*K*K
         #print('m.shape:',m.shape)
@@ -92,7 +93,7 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             escape_NaN = Variable(torch.FloatTensor([1e-4])).cuda()
             #wi_normed = wi / torch.max(l2_norm(wi), escape_NaN)
             wi_normed = wi / torch.max(torch.sqrt((wi*wi).sum([1,2,3],keepdim=True)), escape_NaN)
-            yi = F.conv2d(xi, wi_normed, stride=1, padding=1) # yi => (B=1, C=32*32, H=32, W=32)
+            yi = F.conv2d(xi, wi_normed, stride=1, padding=(ksize-1)//2) # yi => (B=1, C=32*32, H=32, W=32)
 
             # conv implementation for fuse scores to encourage large patches
             if fuse:
