@@ -74,7 +74,7 @@ def load_config(mode=None):
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config', 'config.yml', help='name of config file in the checkpoint path')
+    parser.add_argument('--config', help='name of config file in the checkpoint path')
     parser.add_argument('--path', '--checkpoints', type=str, default='./checkpoints', help='model checkpoints path (default: ./checkpoints)')
     parser.add_argument('--model', type=int, choices=[1, 2, 3, 4], help='1: edge model, 2: inpaint model, 3: edge-inpaint model, 4: joint model')
 
@@ -86,7 +86,10 @@ def load_config(mode=None):
         parser.add_argument('--output', type=str, help='path to the output directory')
 
     args = parser.parse_args()
-    config_path = os.path.join(args.path, args.config)
+    if args.config is None:
+        config_path = os.path.join(args.path, 'config.yml')
+    else:
+        config_path = args.config
 
     # create checkpoints path if does't exist
     if not os.path.exists(args.path):
@@ -98,6 +101,8 @@ def load_config(mode=None):
 
     # load config file
     config = Config(config_path)
+    if args.config is not None:
+        config.PATH = args.path
 
     # train mode
     if mode == 1:

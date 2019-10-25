@@ -347,10 +347,15 @@ class EdgeConnect():
             if self.debug:
                 edges = self.postprocess(1 - edges)[0]
                 masked = self.postprocess(images * (1 - masks) + masks)[0]
-                fname, fext = name.split('.')
+                fname, fext = os.path.splitext(name)
 
-                imsave(edges, os.path.join(self.results_path, fname + '_edge.' + fext))
-                imsave(masked, os.path.join(self.results_path, fname + '_masked.' + fext))
+                imsave(edges, os.path.join(self.results_path, fname + '_edge_infer' + fext))
+                imsave(masked, os.path.join(self.results_path, fname + '_masked' + fext))
+                imsave(edges, os.path.join(self.results_path, fname + '_edge_input' + fext))
+                if model != 1 and self.inpaint_model.generator.use_contextual_attention:
+                    flowmap = self.inpaint_model.generator.flow[0].type(torch.IntTensor).permute(1, 2, 0)
+                    
+                    imsave(flowmap, os.path.join(self.results_path, fname+'_flowmap' + fext))
 
         print('\nEnd test....')
 

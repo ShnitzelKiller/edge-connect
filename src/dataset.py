@@ -13,24 +13,45 @@ from skimage.color import rgb2gray, gray2rgb
 from .utils import create_mask
 from .utils import dilate_mask_with_depth
 
+def load_flist(flist):
+    if isinstance(flist, list):
+        return flist
+
+    # flist: image file path, image directory path, text file flist path
+    if isinstance(flist, str):
+        if os.path.isdir(flist):
+            flist = list(glob.glob(flist + '/*.jpg')) + list(glob.glob(flist + '/*.png'))
+            flist.sort()
+            return flist
+
+        if os.path.isfile(flist):
+            try:
+                files = list(np.genfromtxt(flist, dtype=np.str, encoding='utf-8'))
+                fpath = os.path.split(flist)[0]
+                files = [f if os.path.isabs(f) else os.path.join(fpath, f) for f in files]
+                return files
+            except:
+                return [flist]
+
+    return []
 
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, config, flist, edge_flist, mask_flist, edge_src_flist=None, objmask_flist=None, depthmap_flist=None, augment=True, training=True):
         super(Dataset, self).__init__()
         self.augment = augment
         self.training = training
-        self.data = self.load_flist(flist)
-        self.edge_data = self.load_flist(edge_flist)
-        self.mask_data = self.load_flist(mask_flist)
+        self.data = load_flist(flist)
+        self.edge_data = load_flist(edge_flist)
+        self.mask_data = load_flist(mask_flist)
         print('datalen:',len(self.data),len(self.edge_data),len(self.mask_data))
         self.edge_src = edge_src_flist
         if self.edge_src is not None and config.EDGE == 3:
             if isinstance(self.edge_src, str):
-                self.edge_src_data = self.load_flist(self.edge_src)
+                self.edge_src_data = load_flist(self.edge_src)
                 print('using custom image source for edge detection')
                 print(self.edge_src, len(self.edge_src_data))
             else:
-                self.edge_src_data = [self.load_flist(f) for f in self.edge_src]
+                self.edge_src_data = [load_flist(f) for f in self.edge_src]
                 print('using multiple custom image sources for edge detection')
                 for f,l in zip(self.edge_src, self.edge_src_data):
                     print(f,len(l))
@@ -38,14 +59,14 @@ class Dataset(torch.utils.data.Dataset):
             print('not using custom edge detection source')
         self.objmask = objmask_flist
         if self.objmask is not None and config.OBJMASK:
-            self.objmask_data = self.load_flist(self.objmask)
+            self.objmask_data = load_flist(self.objmask)
             print('using object masks')
             print(self.objmask,len(self.objmask_data))
         else:
             print('not using object masks')
         self.depthmap = depthmap_flist
         if self.depthmap is not None and config.EDGE == 3:
-            self.depthmap_data = self.load_flist(self.depthmap)
+            self.depthmap_data = load_flist(self.depthmap)
             print('using depth maps for mask dilation')
             print(self.depthmap, len(self.depthmap_data))
         else:
@@ -128,7 +149,7 @@ class Dataset(torch.utils.data.Dataset):
             depth = self.load_depth(img, index)
         else:
             depth = None
-        edge = self.load_edge(edge_img, index, mask, depth, randomize)
+        edge = self.load_edge(edge_img, index, mask, depth, randomize or self.training)
         
         if self.objmask is not None and self.use_objmask:
             objmask = self.load_objmask(img, index)
@@ -176,7 +197,12 @@ class Dataset(torch.utils.data.Dataset):
                         edge = np.maximum(edge, canny(imi, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float))
                 return edge
             else:
-                return canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float)
+                if depth is not None and not randomize:
+                    mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
+                    newedge = canny(np.maximum(img.astype(np.uint8)*255, 255-mask.astype(np.uint8)*255), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
+                    return newedge * mask_w
+                else:
+                    return canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float)
 
         # external
         else:
@@ -266,25 +292,6 @@ class Dataset(torch.utils.data.Dataset):
         img = scipy.misc.imresize(img, [height, width])
 
         return img
-
-    def load_flist(self, flist):
-        if isinstance(flist, list):
-            return flist
-
-        # flist: image file path, image directory path, text file flist path
-        if isinstance(flist, str):
-            if os.path.isdir(flist):
-                flist = list(glob.glob(flist + '/*.jpg')) + list(glob.glob(flist + '/*.png'))
-                flist.sort()
-                return flist
-
-            if os.path.isfile(flist):
-                try:
-                    return np.genfromtxt(flist, dtype=np.str, encoding='utf-8')
-                except:
-                    return [flist]
-
-        return []
 
     def create_iterator(self, batch_size):
         while True:

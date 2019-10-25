@@ -92,7 +92,8 @@ class InpaintGenerator(BaseNetwork):
         x = self.encoder(x)
         masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
         if self.use_contextual_attention:
-            x,_ = self.contextual_attention(x, x, mask=masks)
+            x,flow = self.contextual_attention(x, x, mask=masks)
+            self.flow = flow
         x = self.middle(x)
         x = self.decoder(x)
         x = (torch.tanh(x) + 1) / 2
