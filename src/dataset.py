@@ -190,7 +190,7 @@ class Dataset(torch.utils.data.Dataset):
                 for ind,imi in enumerate(img):
                     if ind == 1 and depth is not None and not randomize:
                         mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
-                        newedge = canny(np.maximum(imi.astype(np.uint8)*255, 255-mask.astype(np.uint8)*255), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
+                        newedge = canny(np.maximum(imi, (1-mask).astype(np.float)), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
                         newedge *= mask_w
                         edge = np.maximum(edge, newedge)
                     else:
@@ -199,8 +199,10 @@ class Dataset(torch.utils.data.Dataset):
             else:
                 if depth is not None and not randomize:
                     mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
-                    newedge = canny(np.maximum(img.astype(np.uint8)*255, 255-mask.astype(np.uint8)*255), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
-                    return newedge * mask_w
+                    img = np.maximum(img, (1-mask).astype(np.float))
+                    newedge = canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
+                    newedge *= mask_w
+                    return newedge
                 else:
                     return canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float)
 

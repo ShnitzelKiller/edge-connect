@@ -77,6 +77,7 @@ def load_config(mode=None):
     parser.add_argument('--config', help='name of config file in the checkpoint path')
     parser.add_argument('--path', '--checkpoints', type=str, default='./checkpoints', help='model checkpoints path (default: ./checkpoints)')
     parser.add_argument('--model', type=int, choices=[1, 2, 3, 4], help='1: edge model, 2: inpaint model, 3: edge-inpaint model, 4: joint model')
+    parser.add_argument('--gpu', type=int, nargs='+')
 
     # test mode
     if mode == 2:
@@ -103,6 +104,9 @@ def load_config(mode=None):
     config = Config(config_path)
     if args.config is not None:
         config.PATH = args.path
+
+    if args.gpu is not None:
+        config.GPU = args.gpu
 
     # train mode
     if mode == 1:
