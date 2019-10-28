@@ -37,7 +37,7 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False, ksize=3):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False, ksize=3, skip_connections=False):
         super(InpaintGenerator, self).__init__()
         if contextual_attention:
             print('using contextual attention')
@@ -47,20 +47,34 @@ class InpaintGenerator(BaseNetwork):
             print('using objectmasks in inpaint generator')
         else:
             print('not using objmasks in inpaint generator')
+        if skip_connections:
+            print('using skip connections in inpaint generator')
         self.use_contextual_attention = contextual_attention
-        self.encoder = nn.Sequential(
+        self.skip_connections = skip_connections
+        
+        self.encoder_conv1 = nn.Sequential(
             nn.ReflectionPad2d(3),
             nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
             nn.InstanceNorm2d(64, track_running_stats=False),
-            nn.ReLU(True),
+            nn.ReLU(True)
+        )
 
+        self.encoder_conv2 = nn.Sequential(
             nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(128, track_running_stats=False),
-            nn.ReLU(True),
+            nn.ReLU(True)
+        )
 
+        self.encoder_conv3 = nn.Sequential(
             nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(256, track_running_stats=False),
             nn.ReLU(True)
+        )
+
+        self.encoder = nn.Sequential(
+            self.encoder_conv1,
+            self.encoder_conv2,
+            self.encoder_conv3
         )
         if self.use_contextual_attention:
             self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1, ksize=ksize)
@@ -72,30 +86,51 @@ class InpaintGenerator(BaseNetwork):
 
         self.middle = nn.Sequential(*blocks)
 
-        self.decoder = nn.Sequential(
+
+        self.decoder_conv3 = nn.Sequential(
             nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(128, track_running_stats=False),
-            nn.ReLU(True),
+            nn.ReLU(True)
+        )
 
-            nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=4, stride=2, padding=1),
+        self.decoder_conv2 = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=256 if self.skip_connections else 128, out_channels=64, kernel_size=4, stride=2, padding=1),
             nn.InstanceNorm2d(64, track_running_stats=False),
-            nn.ReLU(True),
+            nn.ReLU(True)
+        )
 
+        self.decoder_conv1 = nn.Sequential(
             nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels=64, out_channels=3, kernel_size=7, padding=0),
+            nn.Conv2d(in_channels=128 if self.skip_connections else 64, out_channels=3, kernel_size=7, padding=0)
+        )
+
+        self.decoder = nn.Sequential(
+            self.decoder_conv3,
+            self.decoder_conv2,
+            self.decoder_conv1,
         )
 
         if init_weights:
             self.init_weights()
 
     def forward(self, x, masks):
-        x = self.encoder(x)
+        if self.skip_connections:
+            x1 = self.encoder_conv1(x)
+            x2 = self.encoder_conv2(x1)
+            x = self.encoder_conv3(x2)
+        else:
+            x = self.encoder(x)
         masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
         if self.use_contextual_attention:
             x,flow = self.contextual_attention(x, x, mask=masks)
             self.flow = flow
         x = self.middle(x)
-        x = self.decoder(x)
+        if self.skip_connections:
+            x = self.decoder_conv3(x)
+            x = self.decoder_conv2(torch.cat((x, x2), 1))
+            x = self.decoder_conv1(torch.cat((x, x1), 1))
+        else:
+            x = self.decoder(x)
         x = (torch.tanh(x) + 1) / 2
 
         return x
