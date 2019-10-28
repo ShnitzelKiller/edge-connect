@@ -52,29 +52,49 @@ class InpaintGenerator(BaseNetwork):
         self.use_contextual_attention = contextual_attention
         self.skip_connections = skip_connections
         
-        self.encoder_conv1 = nn.Sequential(
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
-            nn.InstanceNorm2d(64, track_running_stats=False),
-            nn.ReLU(True)
-        )
+        if self.skip_connections:
+            self.encoder_conv1 = nn.Sequential(
+                nn.ReflectionPad2d(3),
+                nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
+                nn.ReLU(True),
+                nn.BatchNorm2d(64, track_running_stats=False),
+                
+            )
 
-        self.encoder_conv2 = nn.Sequential(
-            nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(128, track_running_stats=False),
-            nn.ReLU(True)
-        )
+            self.encoder_conv2 = nn.Sequential(
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(128, track_running_stats=False),
+            )
 
-        self.encoder_conv3 = nn.Sequential(
-            nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(256, track_running_stats=False),
-            nn.ReLU(True)
-        )
+            self.maxpool1 = nn.MaxPool2d(2)
 
-        self.encoder = nn.Sequential(
-            self.encoder_conv1,
-            self.encoder_conv2,
-            self.encoder_conv3
+            self.encoder_conv3 = nn.Sequential(
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+            )
+            
+            self.maxpool2 = nn.MaxPool2d(2)
+            
+        else:
+            self.encoder = nn.Sequential(
+                nn.ReflectionPad2d(3),
+                nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
+                nn.InstanceNorm2d(64, track_running_stats=False),
+                nn.ReLU(True),
+                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
+                nn.InstanceNorm2d(128, track_running_stats=False),
+                nn.ReLU(True),
+                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
+                nn.InstanceNorm2d(256, track_running_stats=False),
+                nn.ReLU(True)
         )
         if self.use_contextual_attention:
             self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1, ksize=ksize)
@@ -86,29 +106,53 @@ class InpaintGenerator(BaseNetwork):
 
         self.middle = nn.Sequential(*blocks)
 
+        
+        if self.skip_connections:
+            self.decoder_conv3 = nn.Sequential(
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.ConvTranspose2d(in_channels=256, out_channels=256, kernel_size=4, stride=2, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+            )
 
-        self.decoder_conv3 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(128, track_running_stats=False),
-            nn.ReLU(True)
-        )
+            self.decoder_conv2 = nn.Sequential(
+                nn.Conv2d(in_channels=512, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.ConvTranspose2d(256, out_channels=128, kernel_size=4, stride=2, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(128, track_running_stats=False),
+            )
 
-        self.decoder_conv2 = nn.Sequential(
-            nn.ConvTranspose2d(in_channels=256 if self.skip_connections else 128, out_channels=64, kernel_size=4, stride=2, padding=1),
-            nn.InstanceNorm2d(64, track_running_stats=False),
-            nn.ReLU(True)
-        )
-
-        self.decoder_conv1 = nn.Sequential(
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels=128 if self.skip_connections else 64, out_channels=3, kernel_size=7, padding=0)
-        )
-
-        self.decoder = nn.Sequential(
-            self.decoder_conv3,
-            self.decoder_conv2,
-            self.decoder_conv1,
-        )
+            self.decoder_conv1 = nn.Sequential(
+                nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1),
+                nn.ReLU(True),
+                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.ReflectionPad2d(3),
+                nn.Conv2d(in_channels=128, out_channels=3, kernel_size=7, padding=0)
+            )
+        else:
+            self.decoder = nn.Sequential(
+                nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
+                nn.InstanceNorm2d(128, track_running_stats=False),
+                nn.ReLU(True),
+                nn.ConvTranspose2d(128, out_channels=64, kernel_size=4, stride=2, padding=1),
+                nn.InstanceNorm2d(64, track_running_stats=False),
+                nn.ReLU(True),
+                nn.ReflectionPad2d(3),
+                nn.Conv2d(64, out_channels=3, kernel_size=7, padding=0)
+            )
 
         if init_weights:
             self.init_weights()
@@ -117,7 +161,8 @@ class InpaintGenerator(BaseNetwork):
         if self.skip_connections:
             x1 = self.encoder_conv1(x)
             x2 = self.encoder_conv2(x1)
-            x = self.encoder_conv3(x2)
+            x3 = self.encoder_conv3(self.maxpool1(x2))
+            x = self.maxpool2(x3)
         else:
             x = self.encoder(x)
         masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
@@ -127,8 +172,8 @@ class InpaintGenerator(BaseNetwork):
         x = self.middle(x)
         if self.skip_connections:
             x = self.decoder_conv3(x)
-            x = self.decoder_conv2(torch.cat((x, x2), 1))
-            x = self.decoder_conv1(torch.cat((x, x1), 1))
+            x = self.decoder_conv2(torch.cat((x, x3), 1))
+            x = self.decoder_conv1(torch.cat((x, x2), 1))
         else:
             x = self.decoder(x)
         x = (torch.tanh(x) + 1) / 2
