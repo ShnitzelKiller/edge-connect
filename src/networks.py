@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from .model_module import Contextual_Attention_Module
+from .model_module import Contextual_Attention_Module, Contextual_Patches_Reconstruction_Module, Contextual_Patches_Score_Module, Contextual_Score_Module, Contextual_Reconstruction_Module
 import torch.nn.functional as F
 
 class BaseNetwork(nn.Module):
@@ -37,7 +37,7 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, visualize_contextual_attention=False, use_objmasks=False, ksize=3, skip_connections=False):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, multi_contextual_attention=False, visualize_contextual_attention=False, use_objmasks=False, ksize=3, skip_connections=False):
         super(InpaintGenerator, self).__init__()
         if contextual_attention:
             print('using contextual attention')
@@ -51,9 +51,14 @@ class InpaintGenerator(BaseNetwork):
             print('using skip connections in inpaint generator')
             self.base_channels=32
         else:
+            print('not using skip connections in inpaint generator')
             self.base_channels=64
         self.use_contextual_attention = contextual_attention
+        self.use_multi_contextual_attention = multi_contextual_attention
         self.skip_connections = skip_connections
+    
+        if self.use_multi_contextual_attention:
+            print('using multi contextual attention in inpaint generator')
         
         if self.skip_connections:
             self.encoder_conv1 = nn.Sequential(
@@ -87,20 +92,44 @@ class InpaintGenerator(BaseNetwork):
             self.maxpool2 = nn.MaxPool2d(2)
             
         else:
-            self.encoder = nn.Sequential(
-                nn.ReflectionPad2d(3),
-                nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
-                nn.InstanceNorm2d(64, track_running_stats=False),
-                nn.ReLU(True),
-                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
-                nn.InstanceNorm2d(128, track_running_stats=False),
-                nn.ReLU(True),
-                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
-                nn.InstanceNorm2d(256, track_running_stats=False),
-                nn.ReLU(True)
-        )
+            if self.use_multi_contextual_attention:
+                self.encoder1 = nn.Sequential(
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
+                    nn.InstanceNorm2d(64, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(128, track_running_stats=False),
+                    nn.ReLU(True),
+                )
+                self.encoder2 = nn.Sequential(
+                    nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(256, track_running_stats=False),
+                    nn.ReLU(True)
+                )
+            else:
+                self.encoder = nn.Sequential(
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
+                    nn.InstanceNorm2d(64, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.Conv2d(in_channels=64, out_channels=128, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(128, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.Conv2d(in_channels=128, out_channels=256, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(256, track_running_stats=False),
+                    nn.ReLU(True)
+                )
         if self.use_contextual_attention:
-            self.contextual_attention = Contextual_Attention_Module(self.base_channels*4, self.base_channels*4, rate=2, stride=1, ksize=ksize)
+            if self.use_multi_contextual_attention:
+                self.patches_score1 = Contextual_Patches_Score_Module(ksize=ksize, stride=1, rate=2)
+                self.patches_recon1 = Contextual_Patches_Reconstruction_Module(ksize=ksize, stride=1, rate=2)
+                self.score1 = Contextual_Score_Module(ksize=ksize)
+                self.contextual_attention = Contextual_Reconstruction_Module(self.base_channels*4, self.base_channels*4, rate=2)
+                self.patches_recon2 = Contextual_Patches_Reconstruction_Module(ksize=ksize, stride=2, rate=2)
+                self.recon2 = Contextual_Reconstruction_Module(self.base_channels*2, self.base_channels*2, rate=2)
+            else:
+                self.contextual_attention = Contextual_Attention_Module(self.base_channels*4, self.base_channels*4, rate=2, stride=1, ksize=ksize)
         self.visualize_contextual_attention = visualize_contextual_attention
         
         blocks = []
@@ -147,6 +176,19 @@ class InpaintGenerator(BaseNetwork):
                 nn.Conv2d(in_channels=self.base_channels*2, out_channels=3, kernel_size=7, padding=0)
             )
         else:
+            if self.use_multi_contextual_attention:
+                self.decoder2 = nn.Sequential(
+                    nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(128, track_running_stats=False),
+                    nn.ReLU(True),
+                )
+                self.decoder1 = nn.Sequential(
+                    nn.ConvTranspose2d(256, out_channels=64, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(64, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(64, out_channels=3, kernel_size=7, padding=0)
+                )
             self.decoder = nn.Sequential(
                 nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
                 nn.InstanceNorm2d(128, track_running_stats=False),
@@ -168,21 +210,44 @@ class InpaintGenerator(BaseNetwork):
             x3 = self.encoder_conv3(self.maxpool1(x2))
             x = self.maxpool2(x3)
         else:
-            x = self.encoder(x)
-        masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
+            if self.use_multi_contextual_attention:
+                masks_s2 = F.interpolate(masks, scale_factor=0.5, mode='nearest')
+                x1 = self.encoder1(x)
+                x = self.encoder2(x1)
+            else:
+                x = self.encoder(x)
+        masks_s4 = F.interpolate(masks, scale_factor=0.25, mode='nearest')
         if self.use_contextual_attention:
-            if self.visualize_contextual_attention:
-                x,flow = self.contextual_attention(x, x, mask=masks, visualize=True)
+            if self.use_multi_contextual_attention:
+                raw_int_fs = list(x.shape)
+                f, _, w = self.patches_score1(x, x)
+                int_fs = list(f.shape)
+                int_bs = list(f.shape)
+                raw_w, mm = self.patches_recon1(x, masks_s4)
+                scores = self.score1(f, w)
+                x,flow = self.contextual_attention(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, visualize=True)
                 self.flow = flow
             else:
-                x = self.contextual_attention(x, x, mask=masks, visualize=False)
+                if self.visualize_contextual_attention:
+                    x,flow = self.contextual_attention(x, x, mask=masks_s4, visualize=True)
+                    self.flow = flow
+                else:
+                    x = self.contextual_attention(x, x, mask=masks_s4, visualize=False)
         x = self.middle(x)
         if self.skip_connections:
             x = self.decoder_conv3(x)
             x = self.decoder_conv2(torch.cat((x, x3), 1))
             x = self.decoder_conv1(torch.cat((x, x2), 1))
         else:
-            x = self.decoder(x)
+            if self.use_multi_contextual_attention:
+                scores = F.interpolate(scores, scale_factor=2, mode='bilinear', align_corners=True)
+                raw_w, mm = self.patches_recon2(x1, masks_s2)
+                int_fs = (x1.shape[0], x1.shape[1], x1.shape[2]//2, x1.shape[3]//2)
+                xr = self.recon2(raw_w, mm, scores, list(x1.shape), int_fs, int_bs, visualize=False)
+                x = self.decoder2(x)
+                x = self.decoder1(torch.cat((x, xr), 1))
+            else:
+                x = self.decoder(x)
         x = (torch.tanh(x) + 1) / 2
 
         return x

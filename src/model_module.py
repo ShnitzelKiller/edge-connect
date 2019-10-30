@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
-from .ops import contextual_attention
+from .ops import contextual_attention, contextual_patches_score, contextual_patches_reconstruction, contextual_scores, contextual_reconstruction
 from .util import *
 
 
@@ -134,6 +134,53 @@ class Contextual_Attention_Module(nn.Module):
             return self.out(y), flow
         else:
             y = contextual_attention(f, b, mask=mask, ksize=self.ksize, stride=self.stride, rate=self.rate, fuse_k=self.fuse_k, softmax_scale=self.softmax_scale, fuse=self.fuse, visualize=False)
+            return self.out(y)
+
+class Contextual_Patches_Score_Module(nn.Module):
+    def __init__(self, ksize=3, stride=1, rate=2):
+        super(Contextual_Patches_Score_Module, self).__init__()
+        self.ksize = ksize
+        self.stride = stride
+        self.rate = rate
+    def forward(self, f, b):
+        return contextual_patches_score(f, b, ksize=self.ksize, stride=self.stride, rate=self.rate)
+
+
+class Contextual_Patches_Reconstruction_Module(nn.Module):
+    def __init__(self, ksize=3, stride=1, rate=2):
+        super(Contextual_Patches_Reconstruction_Module, self).__init__()
+        self.ksize = ksize
+        self.stride = stride
+        self.rate = rate
+    def forward(self, b, mask=None):
+        return contextual_patches_reconstruction(b, mask=mask, ksize=self.ksize, stride=self.stride, rate=self.rate)
+
+
+class Contextual_Score_Module(nn.Module):
+    def __init__(self, ksize=3):
+        super(Contextual_Score_Module, self).__init__()
+        self.ksize=ksize
+    def forward(self, f, w):
+        return contextual_scores(f, w, ksize=self.ksize)
+
+
+class Contextual_Reconstruction_Module(nn.Module):
+    def __init__(self, in_ch, out_ch, rate=2, fuse_k=3, softmax_scale=10., fuse=True):
+        super(Contextual_Reconstruction_Module, self).__init__()
+        self.rate = rate
+        self.fuse_k = fuse_k
+        self.softmax_scale = softmax_scale
+        self.fuse = fuse
+        layers = []
+        for i in range(2):
+            layers.append(Conv(in_ch, out_ch).cuda())
+        self.out = nn.Sequential(*layers)
+    def forward(self, raw_w, mm, scores, raw_int_fs, int_fs, int_bs, visualize=False):
+        if visualize:
+            y, flow = contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=self.rate, fuse_k=self.fuse_k, softmax_scale=self.softmax_scale, fuse=self.fuse, visualize=True)
+            return self.out(y), flow
+        else:
+            y = contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=self.rate, fuse_k=self.fuse_k, softmax_scale=self.softmax_scale, fuse=self.fuse, visualize=False)
             return self.out(y)
 
 

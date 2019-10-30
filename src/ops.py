@@ -25,21 +25,17 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             tf.Tensor: output
 
         """
-        f, w, raw_w, mm, raw_int_fs, int_fs, int_bs = contextual_patches(f, b, mask, ksize=ksize, stride=stride, rate=rate)
+        raw_int_fs = list(f.size())
+        raw_int_bs = list(b.size())
+        raw_w, mm  = contextual_patches_reconstruction(b, mask=mask, ksize=ksize, stride=stride, rate=rate)
+        f, b, w  = contextual_patches_score(f, b, ksize=ksize, stride=stride, rate=rate)
+        int_fs = list(f.size())
+        int_bs = list(b.size())
         scores = contextual_scores(f, w, ksize=ksize)
         return contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=rate, fuse_k=fuse_k, softmax_scale=softmax_scale, fuse=fuse, visualize=visualize)
 
-def contextual_patches(f, b, mask=None, ksize=3, stride=1, rate=2):
 
-        # get shapes
-        raw_int_fs = list(f.size())
-        raw_int_bs = list(b.size())
-
-        # extract patches from background with stride and rate
-        kernel = 2*rate
-        raw_w = extract_patches(nn.ZeroPad2d((kernel-1)//2), b, kernel=kernel, stride=rate*stride)
-        raw_w = raw_w.contiguous().view(raw_int_bs[0], -1, raw_int_bs[1], kernel, kernel) # B*HW*C*K*K (B, 32*32, 128, 4, 4)
-
+def contextual_patches_score(f, b, ksize=3, stride=1, rate=2):
         # downscaling foreground option: downscaling both foreground and
         # background for matching and use original background for reconstruction.
         f = F.interpolate(f, scale_factor=1/rate, mode='nearest')
@@ -51,25 +47,34 @@ def contextual_patches(f, b, mask=None, ksize=3, stride=1, rate=2):
         int_bs = list(b.size())
         #print('b shape:',b.shape)
         w = extract_patches(nn.ZeroPad2d((ksize-1)//2),b, stride=stride, kernel=ksize)
-        
         w = w.contiguous().view(int_fs[0], -1, int_fs[1], ksize, ksize) # B*HW*C*K*K
-        #print('w shape:',w.shape)
+        return f, b, w
+
+
+def contextual_patches_reconstruction(b, mask=None, ksize=3, stride=1, rate=2):
+        # get shapes
+        raw_int_bs = list(b.size())
+
+        # extract patches from background with stride and rate
+        kernel = 2*rate
+        raw_w = extract_patches(nn.ZeroPad2d((kernel-1)//2), b, kernel=kernel, stride=rate*stride)
+        raw_w = raw_w.contiguous().view(raw_int_bs[0], -1, raw_int_bs[1], kernel, kernel) # B*HW*C*K*K (B, 32*32, 128, 4, 4)
 
         # process mask
         if mask is not None:
             mask = F.interpolate(mask, scale_factor=1./rate, mode='nearest')
             #print('mask shape:',mask.shape)
         else:
-            mask = torch.zeros([1, 1, int_bs[2], int_bs[3]]).cuda()
+            mask = torch.zeros([1, 1, raw_int_bs[2] // rate, raw_int_bs[3] // rate]).cuda()
 
         m = extract_patches(nn.ZeroPad2d((ksize-1)//2), mask, stride=stride, kernel=ksize)
         #print('m.shape before:',m.shape)
-        m = m.contiguous().view(int_fs[0], -1, 1, ksize, ksize)  # B*HW*C*K*K
+        m = m.contiguous().view(raw_int_bs[0], -1, 1, ksize, ksize)  # B*HW*C*K*K
         #print('m.shape:',m.shape)
         #m = m[0] # (32*32, 1, 3, 3)
         m = m.mean([2,3,4]).unsqueeze(-1).unsqueeze(-1)
         mm = m.eq(0.).float() # (1, 32*32, 1, 1)
-        return f, w, raw_w, mm, raw_int_fs, int_fs, int_bs
+        return raw_w, mm
 
 def contextual_scores(f, w, ksize=3):
         
@@ -97,14 +102,12 @@ def contextual_scores(f, w, ksize=3):
 
 
 def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=2, fuse_k=3, softmax_scale=10., fuse=True, visualize=False): 
-        
         raw_w_groups = torch.split(raw_w, 1, dim=0)
         mm_groups = torch.split(mm, 1, dim=0)
         y_groups = torch.split(scores, 1, dim=0)
         y = []
         offsets = []
         k = fuse_k
-        scale = softmax_scale
         fuse_weight = Variable(torch.eye(k).view(1, 1, k, k)).cuda() # 1 x 1 x K x K
         for raw_wi, mi, yi in zip(raw_w_groups, mm_groups, y_groups):
             '''
@@ -132,7 +135,7 @@ def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rat
             #print('yishape:',yi.shape)
             #print('mishape:',mi.shape)
             yi = yi * mi  # mi => (1, 32*32, 1, 1)
-            yi = F.softmax(yi*scale, dim=1)
+            yi = F.softmax(yi*softmax_scale, dim=1)
             yi = yi * mi
 
             _, offset = torch.max(yi, dim=1) # argmax; index
@@ -142,7 +145,6 @@ def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rat
             # deconv for patch pasting
             # 3.1 paste center
             wi_center = raw_wi[0]
-            
             yi = F.conv_transpose2d(yi, wi_center, stride=rate, padding=1) / 4. # (B=1, C=128, H=64, W=64)
 
             y.append(yi)

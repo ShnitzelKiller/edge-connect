@@ -163,7 +163,7 @@ class InpaintingModel(BaseModel):
 
         # generator input: [rgb(3) + edge(1)]
         # discriminator input: [rgb(3)]
-        generator = InpaintGenerator(contextual_attention=config.USE_CA, visualize_contextual_attention=config.MODE == 2, ksize=config.CA_KSIZE, use_objmasks=config.OBJMASK, skip_connections=config.SKIP_CONNECTIONS)
+        generator = InpaintGenerator(contextual_attention=config.USE_CA, multi_contextual_attention=config.USE_MULTI_CA, visualize_contextual_attention=config.MODE == 2, ksize=config.CA_KSIZE, use_objmasks=config.OBJMASK, skip_connections=config.SKIP_CONNECTIONS)
         discriminator = Discriminator(in_channels=3, use_sigmoid=config.GAN_LOSS != 'hinge')
         if len(config.GPU) > 1:
             generator = nn.DataParallel(generator, config.GPU)
