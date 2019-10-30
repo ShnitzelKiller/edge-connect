@@ -37,48 +37,51 @@ class BaseNetwork(nn.Module):
 
 
 class InpaintGenerator(BaseNetwork):
-    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, use_objmasks=False, ksize=3, skip_connections=False):
+    def __init__(self, residual_blocks=8, init_weights=True, contextual_attention=False, visualize_contextual_attention=False, use_objmasks=False, ksize=3, skip_connections=False):
         super(InpaintGenerator, self).__init__()
         if contextual_attention:
             print('using contextual attention')
         else:
-            print('not using contextual_attention')
+            print('not using contextual attention in inpaint generator')
         if use_objmasks:
             print('using objectmasks in inpaint generator')
         else:
             print('not using objmasks in inpaint generator')
         if skip_connections:
             print('using skip connections in inpaint generator')
+            self.base_channels=32
+        else:
+            self.base_channels=64
         self.use_contextual_attention = contextual_attention
         self.skip_connections = skip_connections
         
         if self.skip_connections:
             self.encoder_conv1 = nn.Sequential(
                 nn.ReflectionPad2d(3),
-                nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=64, kernel_size=7, padding=0),
+                nn.Conv2d(in_channels=(5 if use_objmasks else 4), out_channels=self.base_channels, kernel_size=7, padding=0),
                 nn.ReLU(True),
-                nn.BatchNorm2d(64, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels, track_running_stats=False),
                 
             )
 
             self.encoder_conv2 = nn.Sequential(
-                nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1),
+                nn.Conv2d(in_channels=self.base_channels, out_channels=self.base_channels*2, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(128, track_running_stats=False),
-                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.base_channels*2, track_running_stats=False),
+                nn.Conv2d(in_channels=self.base_channels*2, out_channels=self.base_channels*2, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels*2, track_running_stats=False),
             )
 
             self.maxpool1 = nn.MaxPool2d(2)
 
             self.encoder_conv3 = nn.Sequential(
-                nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1),
+                nn.Conv2d(in_channels=self.base_channels*2, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
-                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
+                nn.Conv2d(in_channels=self.base_channels*4, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
             )
             
             self.maxpool2 = nn.MaxPool2d(2)
@@ -97,11 +100,12 @@ class InpaintGenerator(BaseNetwork):
                 nn.ReLU(True)
         )
         if self.use_contextual_attention:
-            self.contextual_attention = Contextual_Attention_Module(256, 256, rate=2, stride=1, ksize=ksize)
+            self.contextual_attention = Contextual_Attention_Module(self.base_channels*4, self.base_channels*4, rate=2, stride=1, ksize=ksize)
+        self.visualize_contextual_attention = visualize_contextual_attention
         
         blocks = []
         for _ in range(residual_blocks):
-            block = ResnetBlock(256, 2)
+            block = ResnetBlock(self.base_channels*4, 2)
             blocks.append(block)
 
         self.middle = nn.Sequential(*blocks)
@@ -109,38 +113,38 @@ class InpaintGenerator(BaseNetwork):
         
         if self.skip_connections:
             self.decoder_conv3 = nn.Sequential(
-                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.Conv2d(in_channels=self.base_channels*4, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
-                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
+                nn.Conv2d(in_channels=self.base_channels*4, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
-                nn.ConvTranspose2d(in_channels=256, out_channels=256, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
+                nn.ConvTranspose2d(in_channels=self.base_channels*4, out_channels=self.base_channels*4, kernel_size=4, stride=2, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
             )
 
             self.decoder_conv2 = nn.Sequential(
-                nn.Conv2d(in_channels=512, out_channels=256, kernel_size=3, padding=1),
+                nn.Conv2d(in_channels=self.base_channels*8, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
-                nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
+                nn.Conv2d(in_channels=self.base_channels*4, out_channels=self.base_channels*4, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(256, track_running_stats=False),
-                nn.ConvTranspose2d(256, out_channels=128, kernel_size=4, stride=2, padding=1),
+                nn.BatchNorm2d(self.base_channels*4, track_running_stats=False),
+                nn.ConvTranspose2d(self.base_channels*4, out_channels=self.base_channels*2, kernel_size=4, stride=2, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels*2, track_running_stats=False),
             )
 
             self.decoder_conv1 = nn.Sequential(
-                nn.Conv2d(in_channels=256, out_channels=128, kernel_size=3, padding=1),
+                nn.Conv2d(in_channels=self.base_channels*4, out_channels=self.base_channels*2, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(128, track_running_stats=False),
-                nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, padding=1),
+                nn.BatchNorm2d(self.base_channels*2, track_running_stats=False),
+                nn.Conv2d(in_channels=self.base_channels*2, out_channels=self.base_channels*2, kernel_size=3, padding=1),
                 nn.ReLU(True),
-                nn.BatchNorm2d(128, track_running_stats=False),
+                nn.BatchNorm2d(self.base_channels*2, track_running_stats=False),
                 nn.ReflectionPad2d(3),
-                nn.Conv2d(in_channels=128, out_channels=3, kernel_size=7, padding=0)
+                nn.Conv2d(in_channels=self.base_channels*2, out_channels=3, kernel_size=7, padding=0)
             )
         else:
             self.decoder = nn.Sequential(
@@ -167,8 +171,11 @@ class InpaintGenerator(BaseNetwork):
             x = self.encoder(x)
         masks = F.interpolate(masks, scale_factor=0.25, mode='nearest')
         if self.use_contextual_attention:
-            x,flow = self.contextual_attention(x, x, mask=masks)
-            self.flow = flow
+            if self.visualize_contextual_attention:
+                x,flow = self.contextual_attention(x, x, mask=masks, visualize=True)
+                self.flow = flow
+            else:
+                x = self.contextual_attention(x, x, mask=masks, visualize=False)
         x = self.middle(x)
         if self.skip_connections:
             x = self.decoder_conv3(x)

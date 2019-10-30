@@ -113,23 +113,28 @@ class Flatten_Module(nn.Module):
 
 # pmconv 9~10
 class Contextual_Attention_Module(nn.Module):
-    def __init__(self, in_ch, out_ch, rate=2, stride=1, ksize=3):
+    def __init__(self, in_ch, out_ch, rate=2, stride=1, ksize=3, fuse_k=3, softmax_scale=10., fuse=True):
         super(Contextual_Attention_Module, self).__init__()
         self.rate = rate
+        self.stride = stride
         self.ksize = ksize
+        self.fuse_k = fuse_k
+        self.softmax_scale = softmax_scale
+        self.fuse = fuse
         #self.padding = nn.ZeroPad2d(1)
         layers = []
         for i in range(2):
             layers.append(Conv(in_ch, out_ch).cuda())
         self.out = nn.Sequential(*layers)
 
-    def forward(self, f, b, mask=None, stride=1, 
-                fuse_k=3, softmax_scale=10., training=True, fuse=True):
-
-        y, flow = contextual_attention(f, b, mask=mask, ksize=self.ksize, stride=stride, rate=self.rate, 
-                                       fuse_k=fuse_k, softmax_scale=softmax_scale, training=training, fuse=fuse)
-        return self.out(y), flow
-
+    def forward(self, f, b, mask=None, visualize=False):
+        
+        if visualize:
+            y, flow = contextual_attention(f, b, mask=mask, ksize=self.ksize, stride=self.stride, rate=self.rate, fuse_k=self.fuse_k, softmax_scale=self.softmax_scale, fuse=self.fuse, visualize=True)
+            return self.out(y), flow
+        else:
+            y = contextual_attention(f, b, mask=mask, ksize=self.ksize, stride=self.stride, rate=self.rate, fuse_k=self.fuse_k, softmax_scale=self.softmax_scale, fuse=self.fuse, visualize=False)
+            return self.out(y)
 
 
 def test_contextual_attention(args):

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from .util import *
 
 def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2, 
-                         fuse_k=3, softmax_scale=10., training=True, fuse=True):
+                         fuse_k=3, softmax_scale=10., fuse=True, visualize=False):
 
         """ Contextual attention layer implementation.
 
@@ -20,13 +20,16 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             stride: Stride for extracting patches from b.
             rate: Dilation for matching.
             softmax_scale: Scaled softmax for attention.
-            training: Indicating if current graph is training or inference.
 
         Returns:
             tf.Tensor: output
 
         """
-        up_sample = lambda x: F.interpolate(x, scale_factor=rate, mode='nearest')
+        f, w, raw_w, mm, raw_int_fs, int_fs, int_bs = contextual_patches(f, b, mask, ksize=ksize, stride=stride, rate=rate)
+        scores = contextual_scores(f, w, ksize=ksize)
+        return contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=rate, fuse_k=fuse_k, softmax_scale=softmax_scale, fuse=fuse, visualize=visualize)
+
+def contextual_patches(f, b, mask=None, ksize=3, stride=1, rate=2):
 
         # get shapes
         raw_int_fs = list(f.size())
@@ -42,12 +45,9 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
         f = F.interpolate(f, scale_factor=1/rate, mode='nearest')
         b = F.interpolate(b, scale_factor=1/rate, mode='nearest')
 
-        fs = f.size() # B x C x H x W
         int_fs = list(f.size())
-        f_groups = torch.split(f, 1, dim=0) # Split tensors by batch dimension; tuple is returned
 
         # from b(B*H*W*C) to w(b*k*k*c*h*w)
-        bs = b.size() # B x C x H x W
         int_bs = list(b.size())
         #print('b shape:',b.shape)
         w = extract_patches(nn.ZeroPad2d((ksize-1)//2),b, stride=stride, kernel=ksize)
@@ -60,7 +60,7 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             mask = F.interpolate(mask, scale_factor=1./rate, mode='nearest')
             #print('mask shape:',mask.shape)
         else:
-            mask = torch.zeros([1, 1, bs[2], bs[3]]).cuda()
+            mask = torch.zeros([1, 1, int_bs[2], int_bs[3]]).cuda()
 
         m = extract_patches(nn.ZeroPad2d((ksize-1)//2), mask, stride=stride, kernel=ksize)
         #print('m.shape before:',m.shape)
@@ -69,18 +69,14 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
         #m = m[0] # (32*32, 1, 3, 3)
         m = m.mean([2,3,4]).unsqueeze(-1).unsqueeze(-1)
         mm = m.eq(0.).float() # (1, 32*32, 1, 1)
-        #print('mm shape:',mm.shape)
-        mm_groups = torch.split(mm, 1, dim=0)
+        return f, w, raw_w, mm, raw_int_fs, int_fs, int_bs
 
-        w_groups = torch.split(w, 1, dim=0) # Split tensors by batch dimension; tuple is returned
-        raw_w_groups = torch.split(raw_w, 1, dim=0) # Split tensors by batch dimension; tuple is returned
-        y = []
-        offsets = []
-        k = fuse_k
-        scale = softmax_scale
-        fuse_weight = Variable(torch.eye(k).view(1, 1, k, k)).cuda() # 1 x 1 x K x K
+def contextual_scores(f, w, ksize=3):
         
-        for xi, wi, raw_wi, mi in zip(f_groups, w_groups, raw_w_groups, mm_groups):
+        f_groups = torch.split(f, 1, dim=0)
+        w_groups = torch.split(w, 1, dim=0)
+        y = []
+        for xi, wi in zip(f_groups, w_groups):
             '''
             O => output channel as a conv filter
             I => input channel as a conv filter
@@ -94,21 +90,43 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             #wi_normed = wi / torch.max(l2_norm(wi), escape_NaN)
             wi_normed = wi / torch.max(torch.sqrt((wi*wi).sum([1,2,3],keepdim=True)), escape_NaN)
             yi = F.conv2d(xi, wi_normed, stride=1, padding=(ksize-1)//2) # yi => (B=1, C=32*32, H=32, W=32)
+            y.append(yi)
+        
+        y = torch.cat(y, dim=0) # back to the mini-batch
+        return y
 
-            # conv implementation for fuse scores to encourage large patches
+
+def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rate=2, fuse_k=3, softmax_scale=10., fuse=True, visualize=False): 
+        
+        raw_w_groups = torch.split(raw_w, 1, dim=0)
+        mm_groups = torch.split(mm, 1, dim=0)
+        y_groups = torch.split(scores, 1, dim=0)
+        y = []
+        offsets = []
+        k = fuse_k
+        scale = softmax_scale
+        fuse_weight = Variable(torch.eye(k).view(1, 1, k, k)).cuda() # 1 x 1 x K x K
+        for raw_wi, mi, yi in zip(raw_w_groups, mm_groups, y_groups):
+            '''
+            O => output channel as a conv filter
+            I => input channel as a conv filter
+            xi : separated tensor along batch dimension of front; (B=1, C=128, H=32, W=32)
+            wi : separated patch tensor along batch dimension of back; (B=1, O=32*32, I=128, KH=3, KW=3)
+            raw_wi : separated tensor along batch dimension of back; (B=1, I=32*32, O=128, KH=4, KW=4)
+            '''
             if fuse:
-                yi = yi.view(1, 1, fs[2]*fs[3], bs[2]*bs[3]) # make all of depth to spatial resolution, (B=1, I=1, H=32*32, W=32*32)
+                yi = yi.view(1, 1, int_fs[2]*int_fs[3], int_bs[2]*int_bs[3]) # make all of depth to spatial resolution, (B=1, I=1, H=32*32, W=32*32)
                 yi = F.conv2d(yi, fuse_weight, stride=1, padding=1) # (B=1, C=1, H=32*32, W=32*32)
 
-                yi = yi.contiguous().view(1, fs[2], fs[3], bs[2], bs[3]) # (B=1, 32, 32, 32, 32)
+                yi = yi.contiguous().view(1, int_fs[2], int_fs[3], int_bs[2], int_bs[3]) # (B=1, 32, 32, 32, 32)
                 yi = yi.permute(0, 2, 1, 4, 3)
-                yi = yi.contiguous().view(1, 1, fs[2]*fs[3], bs[2]*bs[3])
+                yi = yi.contiguous().view(1, 1, int_fs[2]*int_fs[3], int_bs[2]*int_bs[3])
                 
                 yi = F.conv2d(yi, fuse_weight, stride=1, padding=1)
-                yi = yi.contiguous().view(1, fs[3], fs[2], bs[3], bs[2])
+                yi = yi.contiguous().view(1, int_fs[3], int_fs[2], int_bs[3], int_bs[2])
                 yi = yi.permute(0, 2, 1, 4, 3)
 
-            yi = yi.contiguous().view(1, bs[2]*bs[3], fs[2], fs[3]) # (B=1, C=32*32, H=32, W=32)
+            yi = yi.contiguous().view(1, int_bs[2]*int_bs[3], int_fs[2], int_fs[3]) # (B=1, C=32*32, H=32, W=32)
 
             # softmax to match
             #print('yishape:',yi.shape)
@@ -118,8 +136,8 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
             yi = yi * mi
 
             _, offset = torch.max(yi, dim=1) # argmax; index
-            division = torch.div(offset, fs[3]).long() #vertical position
-            offset = torch.stack([division, torch.remainder(offset, fs[3]).long()], dim=-1) # 1 x H x W x 2
+            division = torch.div(offset, int_fs[3]).long() #vertical position
+            offset = torch.stack([division, torch.remainder(offset, int_fs[3]).long()], dim=-1) # 1 x H x W x 2
 
             # deconv for patch pasting
             # 3.1 paste center
@@ -129,29 +147,33 @@ def contextual_attention(f, b, mask=None, ksize=3, stride=1, rate=2,
 
             y.append(yi)
             offsets.append(offset)
-
+        
         y = torch.cat(y, dim=0) # back to the mini-batch
         y.contiguous().view(raw_int_fs)
-        offsets = torch.cat(offsets, dim=0) #B x H x W x 2
-        offsets = offsets.permute(0, 3, 1, 2) #B x 2 x H x W
-        #offsets = offsets.view([int_bs[0]] + [2] + int_bs[2:])
 
-        # case1: visualize optical flow: minus current position
-        h_add = Variable(torch.arange(0,float(bs[2]))).cuda().view([1, 1, bs[2], 1])
-        h_add = h_add.expand(bs[0], 1, bs[2], bs[3])
-        w_add = Variable(torch.arange(0,float(bs[3]))).cuda().view([1, 1, 1, bs[3]])
-        w_add = w_add.expand(bs[0], 1, bs[2], bs[3])
-        offsets = offsets - torch.cat([h_add, w_add], dim=1).long()
+        if visualize:
+                offsets = torch.cat(offsets, dim=0) #B x H x W x 2
+                offsets = offsets.permute(0, 3, 1, 2) #B x 2 x H x W
+                #offsets = offsets.view([int_bs[0]] + [2] + int_bs[2:])
 
-        # to flow image
-        flow = torch.from_numpy(flow_to_image(offsets.permute(0,2,3,1).cpu().data.numpy()))
-        flow = flow.permute(0,3,1,2)
+                # case1: visualize optical flow: minus current position
+                h_add = Variable(torch.arange(0,float(int_bs[2]))).cuda().view([1, 1, int_bs[2], 1])
+                h_add = h_add.expand(int_bs[0], 1, int_bs[2], int_bs[3])
+                w_add = Variable(torch.arange(0,float(int_bs[3]))).cuda().view([1, 1, 1, int_bs[3]])
+                w_add = w_add.expand(int_bs[0], 1, int_bs[2], int_bs[3])
+                offsets = offsets - torch.cat([h_add, w_add], dim=1).long()
+                
+                # to flow image
+                flow = torch.from_numpy(flow_to_image(offsets.permute(0,2,3,1).cpu().data.numpy()))
+                flow = flow.permute(0,3,1,2)
 
-        # # case2: visualize which pixels are attended
-        # flow = torch.from_numpy(highlight_flow((offsets * mask.int()).numpy()))
-        if rate != 1:
-            flow = up_sample(flow)
-        return y, flow
+                # # case2: visualize which pixels are attended
+                # flow = torch.from_numpy(highlight_flow((offsets * mask.int()).numpy()))
+                if rate != 1:
+                        flow = F.interpolate(flow, scale_factor=rate, mode='nearest')
+                return y, flow
+        else:
+                return y
 
 # padding1(16 x 128 x 64 x 64) => (16 x 128 x 64 x 64 x 3 x 3)
 def extract_patches(padding, x, kernel=3, stride=1):
