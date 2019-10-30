@@ -44,7 +44,6 @@ def contextual_patches_score(f, b, ksize=3, stride=1, rate=2):
         int_fs = list(f.size())
 
         # from b(B*H*W*C) to w(b*k*k*c*h*w)
-        int_bs = list(b.size())
         #print('b shape:',b.shape)
         w = extract_patches(nn.ZeroPad2d((ksize-1)//2),b, stride=stride, kernel=ksize)
         w = w.contiguous().view(int_fs[0], -1, int_fs[1], ksize, ksize) # B*HW*C*K*K

@@ -111,3 +111,9 @@ datasets
 *#
 #*
 ~*
+inpaint_*/
+edge_*/
+joint_*/
+*_checkpoints/
+test_warp.py
+make_corresponding_flist.py
