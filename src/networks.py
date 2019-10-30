@@ -123,8 +123,8 @@ class InpaintGenerator(BaseNetwork):
                     nn.ReLU(True)
                 )
         if self.use_contextual_attention:
-            #self.maskpool1 = nn.MaxPool2d(2)
-            #self.maskpool2 = nn.MaxPool2d(2)
+            self.maskpool1 = nn.MaxPool2d(2)
+            self.maskpool2 = nn.MaxPool2d(2)
             if self.use_multi_contextual_attention:
                 self.patches_score1 = Contextual_Patches_Score_Module(ksize=ksize, stride=1, rate=2)
                 self.patches_recon1 = Contextual_Patches_Reconstruction_Module(ksize=ksize, stride=1, rate=2)
@@ -222,10 +222,8 @@ class InpaintGenerator(BaseNetwork):
             else:
                 x = self.encoder(x)
         if self.use_contextual_attention:
-            #masks_s2 = self.maskpool1(masks)
-            #masks_s4 = self.maskpool2(masks_s2)
-            masks_s2 = F.interpolate(masks, scale_factor=0.5, mode='nearest')
-            masks_s4 = F.interpolate(masks, scale_factor=0.25, mode='nearest')
+            masks_s2 = self.maskpool1(masks)
+            masks_s4 = self.maskpool2(masks_s2)
             if self.use_multi_contextual_attention:
                 raw_int_fs = list(x.shape)
                 f, _, w = self.patches_score1(x, x)
