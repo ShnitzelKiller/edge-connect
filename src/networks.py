@@ -189,16 +189,17 @@ class InpaintGenerator(BaseNetwork):
                     nn.ReflectionPad2d(3),
                     nn.Conv2d(64, out_channels=3, kernel_size=7, padding=0)
                 )
-            self.decoder = nn.Sequential(
-                nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
-                nn.InstanceNorm2d(128, track_running_stats=False),
-                nn.ReLU(True),
-                nn.ConvTranspose2d(128, out_channels=64, kernel_size=4, stride=2, padding=1),
-                nn.InstanceNorm2d(64, track_running_stats=False),
-                nn.ReLU(True),
-                nn.ReflectionPad2d(3),
-                nn.Conv2d(64, out_channels=3, kernel_size=7, padding=0)
-            )
+            else:
+                self.decoder = nn.Sequential(
+                    nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(128, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.ConvTranspose2d(128, out_channels=64, kernel_size=4, stride=2, padding=1),
+                    nn.InstanceNorm2d(64, track_running_stats=False),
+                    nn.ReLU(True),
+                    nn.ReflectionPad2d(3),
+                    nn.Conv2d(64, out_channels=3, kernel_size=7, padding=0)
+                )
 
         if init_weights:
             self.init_weights()
