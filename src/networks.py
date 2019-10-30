@@ -59,6 +59,8 @@ class InpaintGenerator(BaseNetwork):
     
         if self.use_multi_contextual_attention:
             print('using multi contextual attention in inpaint generator')
+        else:
+            print('not using multi contextual attention in inpaint generator')
         
         if self.skip_connections:
             self.encoder_conv1 = nn.Sequential(
@@ -121,11 +123,13 @@ class InpaintGenerator(BaseNetwork):
                     nn.ReLU(True)
                 )
         if self.use_contextual_attention:
+            #self.maskpool1 = nn.MaxPool2d(2)
+            #self.maskpool2 = nn.MaxPool2d(2)
             if self.use_multi_contextual_attention:
                 self.patches_score1 = Contextual_Patches_Score_Module(ksize=ksize, stride=1, rate=2)
                 self.patches_recon1 = Contextual_Patches_Reconstruction_Module(ksize=ksize, stride=1, rate=2)
                 self.score1 = Contextual_Score_Module(ksize=ksize)
-                self.contextual_attention = Contextual_Reconstruction_Module(self.base_channels*4, self.base_channels*4, rate=2)
+                self.recon1 = Contextual_Reconstruction_Module(self.base_channels*4, self.base_channels*4, rate=2)
                 self.patches_recon2 = Contextual_Patches_Reconstruction_Module(ksize=ksize, stride=2, rate=2)
                 self.recon2 = Contextual_Reconstruction_Module(self.base_channels*2, self.base_channels*2, rate=2)
             else:
@@ -212,13 +216,16 @@ class InpaintGenerator(BaseNetwork):
             x = self.maxpool2(x3)
         else:
             if self.use_multi_contextual_attention:
-                masks_s2 = F.interpolate(masks, scale_factor=0.5, mode='nearest')
+                
                 x1 = self.encoder1(x)
                 x = self.encoder2(x1)
             else:
                 x = self.encoder(x)
-        masks_s4 = F.interpolate(masks, scale_factor=0.25, mode='nearest')
         if self.use_contextual_attention:
+            #masks_s2 = self.maskpool1(masks)
+            #masks_s4 = self.maskpool2(masks_s2)
+            masks_s2 = F.interpolate(masks, scale_factor=0.5, mode='nearest')
+            masks_s4 = F.interpolate(masks, scale_factor=0.25, mode='nearest')
             if self.use_multi_contextual_attention:
                 raw_int_fs = list(x.shape)
                 f, _, w = self.patches_score1(x, x)
@@ -226,8 +233,11 @@ class InpaintGenerator(BaseNetwork):
                 int_bs = list(f.shape)
                 raw_w, mm = self.patches_recon1(x, masks_s4)
                 scores = self.score1(f, w)
-                x,flow = self.contextual_attention(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, visualize=True)
-                self.flow = flow
+                if self.visualize_contextual_attention:
+                    x,flow = self.recon1(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, visualize=True)
+                    self.flow = flow
+                else:
+                    x = self.recon1(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, visualize=False)
             else:
                 if self.visualize_contextual_attention:
                     x,flow = self.contextual_attention(x, x, mask=masks_s4, visualize=True)

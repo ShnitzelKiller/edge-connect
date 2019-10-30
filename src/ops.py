@@ -138,17 +138,18 @@ def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rat
             yi = F.softmax(yi*softmax_scale, dim=1)
             yi = yi * mi
 
-            _, offset = torch.max(yi, dim=1) # argmax; index
-            division = torch.div(offset, int_fs[3]).long() #vertical position
-            offset = torch.stack([division, torch.remainder(offset, int_fs[3]).long()], dim=-1) # 1 x H x W x 2
-
+            if visualize:
+                    _, offset = torch.max(yi, dim=1) # argmax; index
+                    division = torch.div(offset, int_fs[3]).long() #vertical position
+                    offset = torch.stack([division, torch.remainder(offset, int_fs[3]).long()], dim=-1) # 1 x H x W x 2
+                    offsets.append(offset)
+            
             # deconv for patch pasting
             # 3.1 paste center
             wi_center = raw_wi[0]
             yi = F.conv_transpose2d(yi, wi_center, stride=rate, padding=1) / 4. # (B=1, C=128, H=64, W=64)
 
             y.append(yi)
-            offsets.append(offset)
         
         y = torch.cat(y, dim=0) # back to the mini-batch
         y.contiguous().view(raw_int_fs)
