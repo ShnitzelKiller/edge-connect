@@ -117,15 +117,15 @@ def contextual_reconstruction(raw_w, mm, scores, raw_int_fs, int_fs, int_bs, rat
             raw_wi : separated tensor along batch dimension of back; (B=1, I=32*32, O=128, KH=4, KW=4)
             '''
             if fuse:
-                yi = yi.view(1, 1, int_fs[2]*int_fs[3], int_bs[2]*int_bs[3]) # make all of depth to spatial resolution, (B=1, I=1, H=32*32, W=32*32)
+                yi = yi.view(1, 1, int_bs[2]*int_bs[3], int_fs[2]*int_fs[3]) # make all of depth to spatial resolution, (B=1, I=1, H=32*32, W=32*32)
                 yi = F.conv2d(yi, fuse_weight, stride=1, padding=1) # (B=1, C=1, H=32*32, W=32*32)
 
-                yi = yi.contiguous().view(1, int_fs[2], int_fs[3], int_bs[2], int_bs[3]) # (B=1, 32, 32, 32, 32)
+                yi = yi.contiguous().view(1, int_bs[2], int_bs[3], int_fs[2], int_fs[3]) # (B=1, 32, 32, 32, 32)
                 yi = yi.permute(0, 2, 1, 4, 3)
-                yi = yi.contiguous().view(1, 1, int_fs[2]*int_fs[3], int_bs[2]*int_bs[3])
+                yi = yi.contiguous().view(1, 1, int_bs[2]*int_bs[3], int_fs[2]*int_fs[3])
                 
                 yi = F.conv2d(yi, fuse_weight, stride=1, padding=1)
-                yi = yi.contiguous().view(1, int_fs[3], int_fs[2], int_bs[3], int_bs[2])
+                yi = yi.contiguous().view(1, int_bs[3], int_bs[2], int_fs[3], int_fs[2])
                 yi = yi.permute(0, 2, 1, 4, 3)
 
             yi = yi.contiguous().view(1, int_bs[2]*int_bs[3], int_fs[2], int_fs[3]) # (B=1, C=32*32, H=32, W=32)
