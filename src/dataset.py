@@ -36,10 +36,11 @@ def load_flist(flist):
     return []
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, config, flist, edge_flist, mask_flist, edge_src_flist=None, objmask_flist=None, depthmap_flist=None, augment=True, training=True):
+    def __init__(self, config, flist, edge_flist, mask_flist, edge_src_flist=None, objmask_flist=None, depthmap_flist=None, augment=True, training=True, training_edges=True):
         super(Dataset, self).__init__()
         self.augment = augment
         self.training = training
+        self.training_edges = training_edges
         self.data = load_flist(flist)
         self.edge_data = load_flist(edge_flist)
         self.mask_data = load_flist(mask_flist)
@@ -149,7 +150,7 @@ class Dataset(torch.utils.data.Dataset):
             depth = self.load_depth(img, index)
         else:
             depth = None
-        edge = self.load_edge(edge_img, index, mask, depth, randomize or self.training)
+        edge = self.load_edge(edge_img, index, mask, depth=depth, raw_edges=randomize or self.training_edges)
         
         if self.objmask is not None and self.use_objmask:
             objmask = self.load_objmask(img, index)
@@ -168,12 +169,12 @@ class Dataset(torch.utils.data.Dataset):
         else:
             return self.to_tensor(img), self.to_tensor(img_gray), self.to_tensor(edge), self.to_tensor(mask)
 
-    def load_edge(self, img, index, mask, depth=None, randomize=True):
+    def load_edge(self, img, index, mask, depth=None, raw_edges=True):
         sigma = self.sigma
 
         # in test mode images are masked (with masked regions),
         # using 'mask' parameter prevents canny to detect edges for the masked regions
-        mask = None if randomize else (1 - mask / 255).astype(np.bool)
+        mask = None if raw_edges else (1 - mask / 255).astype(np.bool)
 
         # canny
         if self.edge == 1 or self.edge == 3:
@@ -188,7 +189,7 @@ class Dataset(torch.utils.data.Dataset):
                 imgh,imgw = img[0].shape[0:2]
                 edge = np.zeros([imgh,imgw]).astype(np.float)
                 for ind,imi in enumerate(img):
-                    if ind == 1 and depth is not None and not randomize:
+                    if ind == 1 and depth is not None and not raw_edges:
                         mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
                         newedge = canny(np.maximum(imi, (1-mask).astype(np.float)), sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)
                         newedge *= mask_w
@@ -197,7 +198,7 @@ class Dataset(torch.utils.data.Dataset):
                         edge = np.maximum(edge, canny(imi, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax, mask=mask).astype(np.float))
                 return edge
             else:
-                if depth is not None and not randomize:
+                if depth is not None and not raw_edges:
                     mask_w = dilate_mask_with_depth(mask, depth, sigma=2, magnitude=2)
                     img = np.maximum(img, (1-mask).astype(np.float))
                     newedge = canny(img, sigma=sigma, low_threshold=self.tmin, high_threshold=self.tmax).astype(np.float)

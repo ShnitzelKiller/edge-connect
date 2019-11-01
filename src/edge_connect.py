@@ -31,7 +31,7 @@ class EdgeConnect():
 
         # test mode
         if self.config.MODE == 2:
-            self.test_dataset = Dataset(config, config.TEST_FLIST, config.TEST_EDGE_FLIST, config.TEST_MASK_FLIST, edge_src_flist = config.TEST_EDGE_SRC_FLIST, objmask_flist = config.TEST_OBJMASK_FLIST, depthmap_flist=config.TEST_DEPTHMAP_FLIST, augment=False, training=False)
+            self.test_dataset = Dataset(config, config.TEST_FLIST, config.TEST_EDGE_FLIST, config.TEST_MASK_FLIST, edge_src_flist = config.TEST_EDGE_SRC_FLIST, objmask_flist = config.TEST_OBJMASK_FLIST, depthmap_flist=config.TEST_DEPTHMAP_FLIST, augment=False, training=False, training_edges=self.config.MODEL==2) #force raw ground truth edges if testing inpaint model
         else:
             self.train_dataset = Dataset(config, config.TRAIN_FLIST, config.TRAIN_EDGE_FLIST, config.TRAIN_MASK_FLIST, edge_src_flist = config.TRAIN_EDGE_SRC_FLIST, objmask_flist = config.TRAIN_OBJMASK_FLIST, depthmap_flist=config.TRAIN_DEPTHMAP_FLIST, augment=True, training=True)
             self.val_dataset = Dataset(config, config.VAL_FLIST, config.VAL_EDGE_FLIST, config.VAL_MASK_FLIST, config.VAL_EDGE_SRC_FLIST, objmask_flist = config.VAL_OBJMASK_FLIST, depthmap_flist=config.VAL_DEPTHMAP_FLIST, augment=False, training=True)
